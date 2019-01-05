@@ -293,22 +293,6 @@ Browser.prototype.launch = async function() {
     }
 }
 
-Browser.prototype.setupWSURL = async function() {
-    // Sets up websocket URL to pass around to other services
-    // Cannot be done in constructor because involves a network request
-    // Can't believe constructors need REST APIs in 2019
-    console.log("inside SetupWS");
-    let that = this;
-    let url = `http://localhost:${this.port}/json/version`;
-    request(url,
-        function(err, resp, body) {
-            if (!err) {
-                that.webSocketDebuggerUrl = JSON.parse(body).webSocketDebuggerUrl;
-                console.log('inside:', that.webSocketDebuggerUrl);
-            }
-        });
-}
-
 Browser.prototype.openTab = async function() {
     let browser_tab = new BrowserTab(this.port);
     await browser_tab.connect();
@@ -337,7 +321,6 @@ module.exports = BrowserTab;
 
     let browser = new Browser(PORT);
     await browser.launch();
-    await browser.setupWSURL();
 
     let cookie_tab = await browser.openTab();
 
@@ -364,16 +347,13 @@ module.exports = BrowserTab;
                 continue;
 
             let browser_tab = await browser.openTab();
-
-            console.log('now browser.webSocketDebuggerUrl:', browser.webSocketDebuggerUrl);
-            let automator = new Automator(browser_tab, browser_tab.port);
-            automator.connect();
+            let automator = new Automator(browser_tab);
 
             await browser_tab.goto(url, 10);
 
             await browser_tab.evaluateScript('window.scrollTo(0, document.body.scrollHeight);');
 
-            await sleep(10);
+            await sleep(10);            
 
             await automator.actionSequence();
 
