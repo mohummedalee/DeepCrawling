@@ -353,7 +353,7 @@ module.exports = BrowserTab;
 
             await browser_tab.evaluateScript('window.scrollTo(0, document.body.scrollHeight);');
 
-            await sleep(10);            
+            await sleep(10);
 
             await automator.actionSequence();
 
