@@ -10,6 +10,8 @@ Parts of this code might look like a hot mess.
 */
 
 const KEYWORDS_EMAIL  = ['email', 'e-mail', 'subscribe', 'newsletter']
+const KEYWORDS_MODAL = ['modal', 'dialog']
+const KEYWORDS_LOGIN = ['login', 'log in', 'sign in']
 
 function fail(excptn) {
     console.error(excptn.message, excptn.stack);
@@ -227,10 +229,85 @@ Automator.prototype.filterEmailForms = async function(forms) {
 most likely to be an email form
 */
 Automator.prototype.bestBetForm = async function(forms) {
-    // step 1: check z-index
     console.log('-- bestBetForm -- ');
+    var formInfo = {};
+    var rankCriteria = {};
+
     for (let i=0; i<forms.length; i++) {
-        await this.getzindex(forms[i].formId);
+        // save complete form info against fid (to fetch later)
+        let fid = forms[i].formId;
+        formInfo[fid] = forms[i];
+
+        // step 1: check z-index
+        // higher up forms are meant for user interaction
+        let zind = await this.getzindex(fid);
+        rankCriteria[fid] = [zind];
+        console.log(rankCriteria);
+
+        // step 2: is 'modal' or 'dialog' in the HTML?
+        // pop-up forms are more likely to be asking for emails
+        console.log("has modal keywords:", await this.hasKeywords(KEYWORDS_MODAL, fid));
+        let kwscan = await this.hasKeywords(KEYWORDS_MODAL, fid);
+        rankCriteria[fid].push(kwscan.match ? 1 : 0);
+
+        // step 3: check if login form -- the more login terms found, the lower ranked it should be
+        // not using hasKeywords functions as that doesn't give frequencies
+        var formHtml = (await this.DOM.getOuterHTML({nodeId: fid})).outerHTML;
+        var inputwords_c = 0;
+        KEYWORDS_LOGIN.forEach(word => {
+            console.log("in forEach. word:", word);
+            // gi = (g)lobal (multiple matches), case (i)nsensitive
+            let pattern = new RegExp(word, 'gi');
+            let matches = formHtml.match(pattern);
+            // console.log("html:", formHtml);
+            // console.log(pattern, matches);
+            if(matches) {
+                inputwords_c += matches.length;
+            }
+        });
+        rankCriteria[fid].push(inputwords_c);
+
+        // step 4: forms with more input fields should be ranked higher?
+        // (undergrad kid's logic, not mine) ¯\_(ツ)_/¯
+        var forminputs = await this.DOM.querySelectorAll({
+            nodeId: fid,
+            selector: "input"
+        }).catch(err => { throw err; });
+        console.log('candidate form inputs:', forminputs);
+        rankCriteria[fid].push(forminputs.nodeIds.length);
+    }
+
+    // pick bestbet according to rankCriteria
+    // rankCriteria['mama'] = [1, 0, 0, 0];
+    // rankCriteria['daddy'] = [99, 80, 70, 70];
+    // rankCriteria['papa'] = [1, 1, 0, 0];
+    var sortlist = Object.keys(rankCriteria).map(function(key) {
+        return [key, rankCriteria[key]];
+    });
+
+    // sort by entire list of properties -- can't believe i have to write such menial stuff in JS
+    // for compare function: return < 0 => i comes before j, return > 0, j comes before i
+    sortlist  = sortlist.sort(function(i, j) {
+        let a = i[1], b = j[1];
+        // put form with higher z-index first
+        if (a[0] != b[0]){ return b[0] - a[0];}
+        // give modal forms more preference
+        if (a[1] != b[1]) { return b[1] - a[1]; }
+        // put one with fewer login keywords first
+        if (a[2] != b[2]) { return a[2] - b[2]; }
+        // rank form with more inputs higher
+        if (a[3] != b[3]){ return b[3] - a[3] ; }
+        // both are same, whatever
+        return 0;
+    });
+
+    console.log("sorted list:", sortlist);
+    console.log("picking best bet from:", formInfo);
+    if (sortlist.length) {
+        var bestbet = sortlist[0][0];
+        return formInfo[bestbet];
+    } else {
+        return null;
     }
 }
 
@@ -252,32 +329,15 @@ Automator.prototype.getzindex = async function(nid) {
             } \
         } \
         JSON.stringify(0); \
-    }"
-    console.log("sending to browser:\n", jscode);
-    let zind = await this.browser_tab.evaluateScript(jscode);
+    }";
+    let zind = parseInt(await this.browser_tab.evaluateScript(jscode));
     console.log("z-index received from browser:", zind);
     return zind;
-
-    // ========== old code ===========
-    /* let styles = await this.CSS.getComputedStyleForNode({nodeId: nid})
-        .catch(err => {throw err;});
-    let this_zind = styles.computedStyle.filter(el => el.name == 'z-index');
-    if (this_zind.length > 0 && Number.isInteger(this_zind[0].value)) {
-        return this_zind[0].value;
-    } else {
-        // FIXME
-        // can't deal with thism, handing over to browser
-        let frontendNode = await this.DOM.resolveNode({nodeId: nid})
-            .catch(err => { fail(err); });
-
-        console.log("in else:", this_zind);
-        console.log(JSON.parse(await this.browser_tab.evaluateScript('JSON.stringify(document.URL);')));
-        return -1;
-    }*/
 }
 
 
 Automator.prototype.fillEmailForm = async function(form) {
+    // TODO RIGHTAWAY: need to complete this
     // NOTE: can use this.DOM.setAttributeValue to fill forms
     return;
 }
@@ -293,7 +353,19 @@ Automator.prototype.actionSequence = async function() {
     console.log("forms:", formObjects);
     var candidates = await this.filterEmailForms(formObjects);
     console.log("candidates:", candidates);
-    var bestbet = await this.bestBetForm(candidates);
+    if (candidates.length > 1) {
+        var bestbet = await this.bestBetForm(candidates);
+    } else if (candidates.lenth == 1){
+        var bestbet = candidates[0];
+    } else {
+        // no candidates
+        return;
+    }
+
+    let obj = (await this.DOM.resolveNode({nodeId: bestbet.formId}));
+    console.log("BEST BET:\n", obj);
+
+    // fill out the form
 }
 
 module.exports = Automator;
