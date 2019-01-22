@@ -12,6 +12,7 @@ Parts of this code might look like a hot mess.
 const KEYWORDS_EMAIL  = ['email', 'e-mail', 'subscribe', 'newsletter']
 const KEYWORDS_MODAL = ['modal', 'dialog']
 const KEYWORDS_LOGIN = ['login', 'log in', 'sign in']
+const KEYWORDS_SUBMIT = ['submit', 'sign up', 'sign-up', 'signup', 'sign me up', 'subscribe', 'register', 'join']
 
 function fail(excptn) {
     console.error(excptn.message, excptn.stack);
@@ -124,15 +125,13 @@ Automator.prototype.hasKeywords = async function(kwarr, nid) {
 
 Automator.prototype.isEmailInput = async function(nid) {
     let type = await this.fetchAttribute(nid, "type").catch(err => { throw err });
-    console.log("fetched type:", type);
+    // console.log("fetched type:", type);
     if (type == "email") {
-        console.log('checking type=email');
         return true;
     }
     else if (type == 'text') {
         // maybe the right HTML properties aren't used but it's actually an email input
         let kwscan = await this.hasKeywords(KEYWORDS_EMAIL, nid);
-        console.log('checking type=text. result:', kwscan);
         return kwscan.match;
     } else {
         return false;
@@ -151,37 +150,22 @@ Automator.prototype.filterEmailForms = async function(forms) {
 
     for(let k=0; k<forms.nodeIds.length; k++){
         let id = forms.nodeIds[k];
-        // forms.nodeIds.forEach(async (id) => {
-        // obj = await this.DOM.resolveNode({nodeId: id})
-        //     .catch(err => { fail(err); });
-        console.log("checking:", id);
 
         // don't process further if form is not visible
         visible = await this.isVisible(id).catch(err => { throw err });
         if (!visible) {
             continue;
         }
-        console.log("is visible!");
+        // console.log("is visible!");
 
         // check if form has any email-related words
         let kwscan = await this.hasKeywords(KEYWORDS_EMAIL, id);
-        // html = await this.DOM.getOuterHTML({nodeId: id})
-        //     .catch(err => { throw err; });
-        // html = html.toLowerCase();
-        // var ind = -1;
-        // for (let i=0; i<KEYWORDS_EMAIL.length; i++){
-        //     // if any of the words is in the form, save the form in emailFormCands
-        //     ind = html.search(KEYWORDS_EMAIL[i]);
-        //     if (ind != -1) {
-        //         break;
-        //     }
-        // }
         // if no email keywords found, move on to next form
-        console.log("kwscan result:", id, kwscan);
+        // console.log("kwscan result:", id, kwscan);
         if (!kwscan.match) {
             continue;
         }
-        console.log("has keywords!", kwscan);
+        // console.log("has keywords!", kwscan);
 
         // find input fields inside the form
         forminputs = await this.DOM.querySelectorAll({
@@ -189,36 +173,28 @@ Automator.prototype.filterEmailForms = async function(forms) {
             selector: "input"
         }).catch(err => { throw err; });
         let match = false;
-        console.log(forminputs);
+        // console.log(forminputs);
         for (let i=0; i<forminputs.nodeIds.length; i++) {
             var iid = forminputs.nodeIds[i];
-            console.log("in here buddy, with input id:", iid);
-            // let temp = await this.DOM.getOuterHTML({nodeId: iid}).catch(err => {throw err});
-            // console.log("look:", iid, temp);
-            // let canPutEmail = await this.isVisible(iid).catch(err => {throw err});
+            // console.log("in here buddy, with input id:", iid);
             let canPutEmail = await this.isVisible(iid).catch(err => { throw err; });
-            console.log(canPutEmail);
+            // console.log(canPutEmail);
             canPutEmail = canPutEmail && await this.isEmailInput(iid).catch(err => { throw err; });
-            console.log(iid, canPutEmail);
+            // console.log(iid, canPutEmail);
             if (canPutEmail) {
-                console.log(iid, "is email input!");
+                // console.log(iid, "is email input!");
                 match = true;
                 break;
             }
         }
         // if none of the inputs is taking an email, move on to the next form
-        if (!match) {
-            console.log("I'm quitting");
-            continue;
-        }
+        if (!match) { continue; }
 
         // if made it this far...
         // add to the list of candidate forms
         emailFormCands.push({'formId': id, 'emailInputId': iid});
-        // console.log("updated cands:", emailFormCands);
     }
 
-    console.log("about to resolve promise");
     return new Promise(resolve => {
         resolve(emailFormCands);
     });
@@ -255,12 +231,9 @@ Automator.prototype.bestBetForm = async function(forms) {
         var formHtml = (await this.DOM.getOuterHTML({nodeId: fid})).outerHTML;
         var inputwords_c = 0;
         KEYWORDS_LOGIN.forEach(word => {
-            console.log("in forEach. word:", word);
             // gi = (g)lobal (multiple matches), case (i)nsensitive
             let pattern = new RegExp(word, 'gi');
             let matches = formHtml.match(pattern);
-            // console.log("html:", formHtml);
-            // console.log(pattern, matches);
             if(matches) {
                 inputwords_c += matches.length;
             }
@@ -277,15 +250,10 @@ Automator.prototype.bestBetForm = async function(forms) {
         rankCriteria[fid].push(forminputs.nodeIds.length);
     }
 
-    // pick bestbet according to rankCriteria
-    // rankCriteria['mama'] = [1, 0, 0, 0];
-    // rankCriteria['daddy'] = [99, 80, 70, 70];
-    // rankCriteria['papa'] = [1, 1, 0, 0];
+    // sort by entire list of properties -- can't believe i have to write such menial stuff in JS
     var sortlist = Object.keys(rankCriteria).map(function(key) {
         return [key, rankCriteria[key]];
     });
-
-    // sort by entire list of properties -- can't believe i have to write such menial stuff in JS
     // for compare function: return < 0 => i comes before j, return > 0, j comes before i
     sortlist  = sortlist.sort(function(i, j) {
         let a = i[1], b = j[1];
@@ -331,14 +299,101 @@ Automator.prototype.getzindex = async function(nid) {
         JSON.stringify(0); \
     }";
     let zind = parseInt(await this.browser_tab.evaluateScript(jscode));
-    console.log("z-index received from browser:", zind);
+    // console.log("z-index received from browser:", zind);
     return zind;
 }
 
 
-Automator.prototype.fillEmailForm = async function(form) {
-    // TODO RIGHTAWAY: need to complete this
-    // NOTE: can use this.DOM.setAttributeValue to fill forms
+Automator.prototype.fillEmailForm = async function(formInfo, addr) {
+    console.log("-- fillEmailForm --");
+    console.log(formInfo);
+    var formInputs = await this.DOM.querySelectorAll({
+        nodeId: formInfo.formId,
+        selector: "input"
+    });
+    console.log("form inputs -- before:", formInputs);
+    if (formInputs != null) {
+        formInputs = formInputs.nodeIds;
+    }
+    console.log("form inputs -- after:", formInputs);
+
+    // FIXME: there might be several things in there in addition to just email
+    await this.DOM.setAttributeValue({
+        nodeId: formInfo.emailInputId,
+        name: "value",
+        value: addr
+    });
+    // TODO: fill all fields of the form. pass a user info object
+
+    // show filled form
+    var html = await this.DOM.getOuterHTML({nodeId: formInfo.emailInputId})
+        .catch(err => { throw err; });
+    console.log("filled form:", html.outerHTML);
+
+    // find button to click on
+    var submitButton = null;
+    // find the submit input type from the form inputs
+    for(let i=0; i < formInputs.length; i++) {
+        let iid = formInputs[i];
+        let type = await this.fetchAttribute(iid, "type").catch(err => { throw err });
+        console.log("form input type:", formInputs[i], type);
+        if (type == 'submit' || type == 'button' || type == 'image') {
+            let kwscan = await this.hasKeywords(KEYWORDS_SUBMIT, iid);
+            console.log("kwscan results:", kwscan);
+            if (kwscan.match) {
+                submitButton = formInputs[i];
+                break;
+            }
+        }
+    }
+    console.log("submit button:", submitButton);
+
+    if (submitButton == null) {
+        console.log("going to find buttons now");
+        // none of the inputs is a submit button, maybe there's a button tag around here somewhere
+        let formButtons = (await this.DOM.querySelectorAll({
+            nodeId: formInfo.formId,
+            selector: "button"
+        })).nodeIds;
+        console.log('formButtons:', formButtons);
+
+        for (let j=0; j<formButtons.length; j++) {
+            let visible = await this.isVisible(formButtons[j]).catch(err => { throw err });
+            console.log(formButtons[j], "visibility:", visible);
+            if (!visible) {
+                continue;
+            }
+
+            let type = await this.fetchAttribute(formButtons[j], "type").catch(err => { throw err });
+            // avoid non-submit buttons
+            console.log(formButtons[j], "type:", type);
+            if (type != null && (type == 'reset' || type == 'menu')) {
+                continue;
+            }
+            let kwscan = await this.hasKeywords(KEYWORDS_SUBMIT, formButtons[j]);
+            console.log(formButtons[j], "kwscan:", kwscan);
+            if (kwscan.match) {
+                submitButton = formButtons[j];
+                break;
+            }
+        }
+    }
+
+    // (ask browser to) click button
+    if (submitButton) {
+        let nodeObj = await this.DOM.resolveNode({nodeId: submitButton})
+            .catch(err => { fail(err); });
+        let selector = "'" + nodeObj.object.description + "'";
+        console.log("sending selector to browser:", selector);
+        let jscode = "var elem = document.querySelector( " + selector + "); \
+        if (elem) { \
+            elem.click(); \
+            JSON.stringify('done!'); \
+        }";
+        let msg = await this.browser_tab.evaluateScript(jscode);
+        console.log("button clicked! browser said:", msg);
+    }
+
     return;
 }
 
@@ -354,18 +409,29 @@ Automator.prototype.actionSequence = async function() {
     var candidates = await this.filterEmailForms(formObjects);
     console.log("candidates:", candidates);
     if (candidates.length > 1) {
+        console.log(">> 1");
         var bestbet = await this.bestBetForm(candidates);
     } else if (candidates.lenth == 1){
+        console.log(">> 2");
         var bestbet = candidates[0];
     } else {
-        // no candidates
+        // TODO LATER: no candidates, search for forms in iframes
+        console.log(">> 3");
         return;
     }
+    console.log("best bet:", bestbet);
 
-    let obj = (await this.DOM.resolveNode({nodeId: bestbet.formId}));
-    console.log("BEST BET:\n", obj);
+    // let obj = (await this.DOM.resolveNode({nodeId: bestbet.formId}));
+    // console.log("BEST BET:\n", obj);
+
+    var emailAddr = "aus_94@yahoo.com";
+    await this.fillEmailForm(bestbet, emailAddr);
 
     // fill out the form
+    // at this point in bestbet, i have the formId and the emailInputId of an email form
+    // now need to head over to the object and fill it out
+
+    // then just need to execute the submit action of the form
 }
 
 module.exports = Automator;

@@ -353,8 +353,8 @@ module.exports = BrowserTab;
 
             await browser_tab.evaluateScript('window.scrollTo(0, document.body.scrollHeight);');
 
+            // wait for a bit, let any pop-ups do their thing
             await sleep(10);
-
             await automator.actionSequence();
 
             if (url === Util.format('http://%s/', SITE)) {
