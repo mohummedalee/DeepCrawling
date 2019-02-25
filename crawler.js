@@ -9,6 +9,8 @@ const FS = require('fs');
 const ArgParse = require('argparse');
 const Automator = require('./automator.js');
 const request = require('request');
+const cp = require('child_process');
+const path = require('path');
 
 let SITE = null;
 let COUNT = 0;
@@ -16,6 +18,7 @@ let LANDING_DOMAIN = null;
 let COOKIE_FILENAME = null;
 let HEADLESS = false;
 let OUTPUT_LOGS_FILENAME = null;
+let CRASH_LOGS_FILENAME = null;
 let OUTPUT_COOKIE_FILENAME = null;
 let PORT = null;
 
@@ -83,6 +86,14 @@ function parseArguments() {
         help: 'A JSON file that will contain the output logs'
       }
     );
+    parser.addArgument(
+      '--crash-logs',
+      {
+        action: 'store',
+        defaultValue: null,
+        help: 'A JSON file that will contain the stacktraces in case automation crashes'
+      }
+    );
 
     let args = parser.parseArgs();
 
@@ -94,6 +105,7 @@ function parseArguments() {
     OUTPUT_COOKIE_FILENAME = args.output_cookies;
     OUTPUT_LOGS_FILENAME = args.output_logs;
     PORT = args.port;
+    CRASH_LOGS_FILENAME = args.crash_logs;
 }
 
 const DOMAINS = [
@@ -165,6 +177,7 @@ function BrowserTab(port) {
 }
 
 BrowserTab.prototype.connect = async function() {
+    console.log('BrowserTab connecting to port:', this.port);
     this.tab = await ChromeRemoteInterface.New({port: this.port});
     this.client = await ChromeRemoteInterface({target: this.tab.webSocketDebuggerUrl});
 
@@ -299,8 +312,25 @@ Browser.prototype.openTab = async function() {
     return browser_tab;
 }
 
+BrowserTab.prototype.webdriverAutomation = async function(siteurl) {
+    const pythonAutomator = cp.execFile('python3', ["./automator.py", this.port, siteurl],
+        (error, stdout, stderr) => {
+            if (error) {
+                console.log("error recvd in JS:", error);
+                // record crash stacktraces
+                let host = UrlParse(siteurl).host;
+                FS.writeFileSync(path.join(CRASH_LOGS_FILENAME, host), error);
+            } else {
+                console.log('--- python output:');
+                console.log(stdout);
+            }
+        });
+    return;
+}
+
 module.exports = Browser;
 module.exports = BrowserTab;
+
 
 // Main logic happens here
 (async () => {
@@ -337,6 +367,7 @@ module.exports = BrowserTab;
     let visited_urls = new Set();
     let url_queue = [Util.format('http://%s/', SITE)];
 
+    let opened_tab = 0;
     while (url_queue.length > 0 && visited_urls.size < COUNT) {
         try {
             ShuffleArray(url_queue);
@@ -347,7 +378,6 @@ module.exports = BrowserTab;
                 continue;
 
             let browser_tab = await browser.openTab();
-            let automator = new Automator(browser_tab);
 
             await browser_tab.goto(url, 10);
 
@@ -355,7 +385,15 @@ module.exports = BrowserTab;
 
             // wait for a bit, let any pop-ups do their thing
             await sleep(10);
-            await automator.actionSequence();
+
+            if (opened_tab == 0){
+                // if visiting multiple links in different tabs, only call automator on one
+                await browser_tab.webdriverAutomation(url);
+                console.log("launched form filler automation. waiting.");
+                // don't quit and prematurely kill the browser
+                // the automator might take some time visiting pages to find forms, wait for it
+                await sleep(1 * 60);
+            }
 
             if (url === Util.format('http://%s/', SITE)) {
                 try {
@@ -395,11 +433,14 @@ module.exports = BrowserTab;
         } catch (ex) {
             console.error(ex.message, ex.stack);
         }
+
+        opened_tab++;
     }
 
     FS.writeFileSync(OUTPUT_LOGS_FILENAME, JSON.stringify(result.pages));
     FS.writeFileSync(OUTPUT_COOKIE_FILENAME, JSON.stringify(result.cookies));
 
+    console.log("going to finish off");
     await browser.close();
 })();
 

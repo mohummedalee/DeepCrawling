@@ -88,7 +88,7 @@ Automator.prototype.fetchAttribute = async function(nid, attr) {
         // `arr` is structured like [key, value, key, value, ...]
         // we need to return the exact attribute asked for
         let arr = res.attributes;
-        console.log("fetching attr:", nid, attr, arr);
+        // console.log("fetching attr:", nid, attr, arr);
         for (let i=0; i<arr.length; i++){
             if (arr[i] == attr && i+1 < arr.length) {
                 val = arr[i+1];
@@ -304,31 +304,34 @@ Automator.prototype.getzindex = async function(nid) {
 }
 
 
-Automator.prototype.fillEmailForm = async function(formInfo, addr) {
+Automator.prototype.typeInField = async function(nid, text) {
+    let nodeObj = await this.DOM.resolveNode({nodeId: nid});
+    let selector = "'" + nodeObj.object.description + "'";
+    let jscode = "var elem = document.querySelector( " + selector + "); \
+    if (elem) { \
+        elem.value = " + "'" + text + "'" + "; \
+        JSON.stringify('filled in field on browser side.'); \
+    }";
+    let msg = await this.browser_tab.evaluateScript(jscode);
+    console.log(msg);
+
+    // await this.DOM.setAttributeValue({
+    //     nodeId: nid,
+    //     name: "value",
+    //     value: text
+    // });
+}
+
+
+// equivalent of _form_fill_and_submit
+Automator.prototype.fillEmailForm = async function(formInfo, userInfo) {
     console.log("-- fillEmailForm --");
     console.log(formInfo);
-    var formInputs = await this.DOM.querySelectorAll({
+    var formInputs = (await this.DOM.querySelectorAll({
         nodeId: formInfo.formId,
         selector: "input"
-    });
-    console.log("form inputs -- before:", formInputs);
-    if (formInputs != null) {
-        formInputs = formInputs.nodeIds;
-    }
-    console.log("form inputs -- after:", formInputs);
-
-    // FIXME: there might be several things in there in addition to just email
-    await this.DOM.setAttributeValue({
-        nodeId: formInfo.emailInputId,
-        name: "value",
-        value: addr
-    });
-    // TODO: fill all fields of the form. pass a user info object
-
-    // show filled form
-    var html = await this.DOM.getOuterHTML({nodeId: formInfo.emailInputId})
-        .catch(err => { throw err; });
-    console.log("filled form:", html.outerHTML);
+    })).nodeIds;
+    console.log("form inputs:", formInputs);
 
     // find button to click on
     var submitButton = null;
@@ -336,7 +339,104 @@ Automator.prototype.fillEmailForm = async function(formInfo, addr) {
     for(let i=0; i < formInputs.length; i++) {
         let iid = formInputs[i];
         let type = await this.fetchAttribute(iid, "type").catch(err => { throw err });
-        console.log("form input type:", formInputs[i], type);
+        console.log("form input type:", iid, type);
+
+        let visible = await this.isVisible(iid).catch(err => { throw err });
+        console.log(iid, "visibility:", visible);
+        if (!visible) {
+            continue;
+        }
+
+        // deal with this first -- already seen this, know this is where email goes
+        if (iid === formInfo.emailInputId) {
+            console.log('Filling email now');
+            await this.typeInField(iid, userInfo['email']);
+        } else if (type === 'text') {
+            // different situtations -- figure out what to type in
+            if ((await this.hasKeywords(['company'], iid)).match) {
+                await this.typeInField(iid, userInfo['company']);
+            } else if((await this.hasKeywords(['title'], iid)).match) {
+                await this.typeInField(iid, userInfo['title']);
+            } else if((await this.hasKeywords(['name'], iid)).match) {
+                if ((await this.hasKeywords(['first', 'forename', 'fname', 'given'], iid)).match) {
+                    await this.typeInField(iid, userInfo['fname']);
+                } else if ((await this.hasKeywords(['last', 'surname', 'lname', 'family'], iid)).match) {
+                    await this.typeInField(iid, userInfo['lname']);
+                } else if ((await this.hasKeywords(['user', 'account', 'username'], iid)).match) {
+                    await this.typeInField(iid, userInfo['uname']);
+                } else {
+                    await this.typeInField(iid, userInfo['fullname']);
+                }
+            }
+            // TODO IMMEDIATE: deal with other textual inputs
+        } else if (type === 'checkbox') {
+            // only proceed if checkbox is required
+            let checkboxAttrs = await this.DOM.getAttributes({nodeId: iid});
+            let requiredInd = checkboxAttrs.attributes.indexOf("required");
+            console.log('checkbox required index:', requiredInd);
+            if (requiredInd == -1) {
+                continue;
+            } else if (checkboxAttrs[requiredInd + 1] === "false") {
+                continue;
+            }
+            // if here, either someone put plain "required" in the html tag or set required=true
+
+            // click on node
+            let obj = (await this.DOM.resolveNode({nodeId: iid}));
+            let selector = "'" + obj.object.description + "'";
+            console.log("found a checkbox -- obj:", obj, "selector:", selector);
+            let jscode = "\
+            var elem = document.querySelector( " + selector + "); \
+            if (elem) { \
+                elem.click(); \
+                JSON.stringify('checkbox clicked!'); \
+            }";
+            let temp = await this.browser_tab.evaluateScript(jscode);
+            console.log("browser said:", temp);
+        }
+        // TODO: deal with other types of input
+
+    }
+
+    // once form is filled, find submit button from all the form's inputs and click
+    let done = await this.findSubmitAndClick(formInfo, formInputs);
+
+    // console.log("GOING TO SEND FORM!");
+    // var html = await this.DOM.getOuterHTML({nodeId: formInfo.formId});
+    // console.log(">> currently form looks like:", html.outerHTML);
+
+    // (ask browser to) submit form
+    // let nodeObj = await this.DOM.resolveNode({nodeId: formInfo.formId})
+    //     .catch(err => { fail(err); });
+    // let selector = "'" + nodeObj.object.description + "'";
+    // console.log("sending selector to browser:", selector, ", resolution:", nodeObj);
+    await sleep(10);
+    // let jscode = "\
+    // var elem = document.querySelector( " + selector + "); \
+    // if (elem) { \
+    //     if (typeof elem.submit == 'function') { \
+    //         elem.submit(); \
+    //     } else if (typeof elem.submit == 'object'){ \
+    //         elem.submit.click(); \
+    //     } \
+    //     JSON.stringify('signed up!'); \
+    // }";
+    // let msg = await this.browser_tab.evaluateScript(jscode);
+    // console.log("form submitted! browser said:", msg);
+    // await sleep(10);
+
+    return;
+}
+
+
+Automator.prototype.findSubmitAndClick = async function(formInfo, formInputs) {
+    console.log('-- findSubmitAndClick --');
+    // find button to click on
+    var submitButton = null;
+    // find the submit input type from the form inputs
+    for(let i=0; i < formInputs.length; i++) {
+        let iid = formInputs[i];
+        let type = await this.fetchAttribute(iid, "type").catch(err => { throw err });
         if (type == 'submit' || type == 'button' || type == 'image') {
             let kwscan = await this.hasKeywords(KEYWORDS_SUBMIT, iid);
             console.log("kwscan results:", kwscan);
@@ -349,7 +449,7 @@ Automator.prototype.fillEmailForm = async function(formInfo, addr) {
     console.log("submit button:", submitButton);
 
     if (submitButton == null) {
-        console.log("going to find buttons now");
+        console.log("couldn't find input type=submit, going to find buttons now");
         // none of the inputs is a submit button, maybe there's a button tag around here somewhere
         let formButtons = (await this.DOM.querySelectorAll({
             nodeId: formInfo.formId,
@@ -380,11 +480,13 @@ Automator.prototype.fillEmailForm = async function(formInfo, addr) {
     }
 
     // (ask browser to) click button
+    // NOTE: all of this is pointless. i just need to call the form.submit() function from the browser
+    // LOL, you thought so you idiot
     if (submitButton) {
         let nodeObj = await this.DOM.resolveNode({nodeId: submitButton})
             .catch(err => { fail(err); });
         let selector = "'" + nodeObj.object.description + "'";
-        console.log("sending selector to browser:", selector);
+        console.log("clicking button -- sending selector to browser:", selector);
         let jscode = "var elem = document.querySelector( " + selector + "); \
         if (elem) { \
             elem.click(); \
@@ -393,10 +495,12 @@ Automator.prototype.fillEmailForm = async function(formInfo, addr) {
         let msg = await this.browser_tab.evaluateScript(jscode);
         console.log("button clicked! browser said:", msg);
     }
-
-    return;
 }
 
+
+async function sleep(seconds) {
+    return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+}
 
 // main workhorse function called by crawler.js
 // logic imported from CITP paper:
@@ -409,23 +513,29 @@ Automator.prototype.actionSequence = async function() {
     var candidates = await this.filterEmailForms(formObjects);
     console.log("candidates:", candidates);
     if (candidates.length > 1) {
-        console.log(">> 1");
         var bestbet = await this.bestBetForm(candidates);
-    } else if (candidates.lenth == 1){
-        console.log(">> 2");
+    } else if (candidates.length == 1){
         var bestbet = candidates[0];
     } else {
         // TODO LATER: no candidates, search for forms in iframes
-        console.log(">> 3");
+        console.log(">> branch 3. candidates:", candidates);
         return;
     }
-    console.log("best bet:", bestbet);
+    // console.log("best bet:", bestbet);
 
-    // let obj = (await this.DOM.resolveNode({nodeId: bestbet.formId}));
-    // console.log("BEST BET:\n", obj);
+    let obj = (await this.DOM.resolveNode({nodeId: bestbet.formId}));
+    console.log("BEST BET:", obj.object.description);
 
-    var emailAddr = "aus_94@yahoo.com";
-    await this.fillEmailForm(bestbet, emailAddr);
+    var info = {
+        email: "aus_94@yahoo.com",
+        fname: "Bubba",
+        lname: "Gump",
+        fullname: "Bubba Gump",
+        uname: "bubbagump",
+        company: "Bubba Gump Associates",
+        title: "Ms."
+    };
+    await this.fillEmailForm(bestbet, info);
 
     // fill out the form
     // at this point in bestbet, i have the formId and the emailInputId of an email form
